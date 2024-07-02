@@ -118,9 +118,6 @@ let
 
   };
 
-  defStr = def: if def == null then "" else def;
-  defSubst = def: subst: if def == null then "" else builtins.replaceStrings [ "@@" ] [ def ] subst;
-
   genTlsConfig = tls: with tls;
     let
       polstr = {

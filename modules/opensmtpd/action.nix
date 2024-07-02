@@ -2,8 +2,10 @@
 
 let
   inherit (lib) mkOption types mkEnableOption;
-  inherit (import ./util.nix lib) nonEmpty mkSelfCfg mkSelfTableCfg assertOptionalTable;
+  inherit (import ./util.nix lib) nonEmpty mkSelfCfg mkSelfTableCfg mkOptionalTableCfg ensureMsg;
   cfg = config.services.opensmtpd;
+
+  # Local options for all delivery methods
   mboxOnlyOptions = {
     alias = mkOption {
       type = with types; nullOr str;
@@ -55,17 +57,13 @@ let
       junk = mkEnableOption "Send messages marked as spam to the Junk folder";
     };
   };
-  mboxConfig = {
-    options = mboxOnlyOptions;
-  };
+  mboxConfig.options = mboxOnlyOptions;
   expand-onlyConfig.options = localOptions;
+  forward-onlyConfig.options = localOptions;
   mdaConfig.options = mdaOptions;
 
-  mkAliasOpt = opts:
-    lib.optionalString (assertOptionalTable cfg opts.alias) (mkSelfTableCfg opts "alias");
-
   genMboxOnlyOptions = opts: lib.concatStringsSep " " (nonEmpty [
-    (mkAliasOpt opts)
+    (mkOptionalTableCfg "alias" opts.alias cfg)
     (mkSelfCfg opts "ttl")
     (mkSelfTableCfg opts "virtual")
   ]);
@@ -87,10 +85,219 @@ let
     (mkSelfCfg opts "wrapper") # TODO check if wrapper is defined
   ]);
 
+  # Remote options for all delivery methods
+  remoteOptions = {
+    backup = {
+      enabled = mkEnableOption "Act as a backup MX";
+
+      priorityFrom = mkOption {
+        type = with types; nullOr str;
+        default = null;
+        descrtiption = ''
+          Act as a backup MX; deliver to MX with priority higher than MX identified
+          in this option.
+        '';
+      };
+    };
+
+    helo = {
+      name = mkOption {
+        type = with types; nullOr str;
+        default = null;
+        description = "Name to use in the HELO/EHLO command. Mutually exclusive with `source`";
+      };
+
+      source = mkOption {
+        type = with types; nullOr str;
+        default = null;
+        description = "Table to lookup for HELO/EHLO strings. Mutually exclusive with `name`";
+      };
+    };
+
+    domain = mkOption {
+      type = with types; nullOr str;
+      default = null;
+      description = "Table to lookup for relays instead of querying for MX records.";
+    };
+
+    smarthost = mkOption {
+      type = with types; nullOr (submodule {
+        options = {
+          lmtp = mkEnableOption "Use LMTP for the smarthost";
+
+          authAs = mkOption {
+            type = with types; nullOr str;
+            default = null;
+            descrtiption = "Label in the auth table to use for authentication.";
+          };
+
+          authTable = mkOption {
+            type = with types; nullOr str;
+            default = null;
+            description = "Table to lookup for authentication credentials.";
+          };
+
+          port = mkOption {
+            type = with types; nullOr port;
+            default = null;
+            description = ''
+              Port to connect on the smarthost. The default depends on the TLS policy
+              configuration (465 for connect, otherwise 25); if `lmtp` is enabled on
+              the smarthost, port must be specified explicitly.
+            '';
+          };
+
+          host = mkOption {
+            type = types.str;
+            description = "Hostname of the smarthost";
+          };
+        };
+      });
+      default = null;
+      description = "Relay host specification.";
+    };
+
+    tls = {
+      policy = mkOption {
+        type = types.enum [ "none" "permit" "connect" "require" ];
+        default = "permit";
+        description = ''
+          The TLS policy; mostly self-explanatory. The options "none" and "connect"
+          make sense only when `smarthost` is specified, otherwise it is an error
+          to use them.
+
+          Note: "require" will accept a self-signed certificate, thus making the
+          connection vulnerable to MITM attacks. Use "verify" if you want to be
+          sure that the certificate is signed by a trusted CA.
+        '';
+      };
+
+      acceptSelfSigned = mkEnableOption "Accept self-signed certificates";
+
+      pki = mkOption {
+        type = with types; nullOr str;
+        default = null;
+        description = ''
+          Name of the PKI to be used for TLS connections.
+
+          Note: it is NOT an error to leave `null` here even if the TLS policy is
+          not "none"; the only case when it is required is when the smarthost requires
+          a client certificate. This, however, cannot be known at build time.
+        '';
+      };
+
+      protocols = mkOption {
+        type = with types; nullOr str;
+        default = null;
+        description = ''
+          List of protocols to use for TLS connections. The default depends on the
+          opensmtpd build options etc.
+
+          Unless you know what you are doing, it is recommended to leave this empty.
+        '';
+      };
+
+      ciphers = mkOption {
+        type = with types; nullOr str;
+        default = null;
+        description = ''
+          List of ciphers to use for TLS connections. The default depends on the
+          opensmtpd build options etc.
+
+          Unless you know what you are doing, it is recommended to leave this empty.
+        '';
+      };
+    };
+
+    srs = mkEnableOption ''
+      When relaying a mail resulting from a forward, use the Sender Rewriting
+      Scheme to rewrite sender address.
+    '';
+
+
+    mailFrom = mkOption {
+      type = with types; nullOr str;
+      default = null;
+      description = ''
+        Use mailaddr as the MAIL FROM address within the SMTP transaction.
+      '';
+    };
+
+    src = {
+      address = mkOption {
+        type = with types; nullOr str;
+        default = null;
+        description = ''
+          Use the specified IP address as the source address for the connection.
+
+          Mutually exclusive with `addrTable`.
+        '';
+      };
+
+      addrTable = mkOption {
+        type = with types; nullOr str;
+        default = null;
+        description = ''
+          Use the specified table to lookup the source address for the connection.
+
+          Mutually exclusive with `address`.
+        '';
+      };
+    };
+  };
+
+  genBackupOptions = opts: lib.concatStringsSep " " (nonEmpty [
+    (lib.optionalString opts.backup.enabled "backup")
+    (defSubst opts.backup.priorityFrom "mx @@")
+  ]);
+
+  genHeloOptions = opts: with opts.helo;
+    if name != null && source != null then
+      throw "Only one of `name` and `source` can be specified";
+    else
+      lib.concatStringsSep " " (nonEmpty [
+        (defSubst name "helo @@")
+        (mkOptionalTableCfg "helo-src" source cfg)
+      ]);
+
+  genDomainOptions = opts: mkOptionalTableCfg "domain" opts.domain cfg;
+
+  genSmarthostUrl = opts:
+    let
+      sh = opts.smarthost;
+      tlspol = opts.tls.policy;
+      portNum =
+        if sh.port != null then sh.port
+        else if sh.lmtp then throw "Port must be specified explicitly when using LMTP"
+        else if tlspol == "connect" then 465
+        else 25;
+      proto = if sh.lmtp then "lmtp" else {
+        none = "smtp+notls";
+        permit = "smtp";
+        connect = "smtps";
+        require = "smtp+tls";
+      }.${tlspol};
+      portStr = if portNum == 25 then "" else ":${builtins.toString portNum}";
+      authAsStr =
+        if sh.authAs != null
+        then ensureMsg (sh.authTable != null) "authAs requires authTable" "${sh.authAs}@"
+        else "";
+      hostStr = sh.host;
+    in
+    "${proto}://${authAsStr}${hostStr}:${portStr}";
+
+  genSmarthostOptions = opts:
+    lib.optionalString (opts.smarthost != null) (lib.concatStringsSep " " (nonEmpty [
+      "host"
+      (genSmarthostUrl opts)
+      (mkOptionalTableCfg "auth" opts.smarthost.authTable cfg)
+    ]));
+
   genTypeOptions = {
     maildir = genMaildirOptions;
     mbox = genMboxOnlyOptions;
     expand-only = genLocalOptions;
+    forward-only = genLocalOptions;
     mda = genMdaOptions;
   };
 
@@ -127,6 +334,13 @@ in
           description = ''
             Only accept the message if a delivery method was specified in an aliases
             or .forward file.
+          '';
+        };
+        forward-only = mkOption {
+          type = submodule forward-onlyConfig;
+          description = ''
+            Only accept the message if the recipient results in a remote address after
+            the processing of aliases or forward file.
           '';
         };
         mda = mkOption {

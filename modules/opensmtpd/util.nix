@@ -17,4 +17,20 @@ lib: {
       throw "Table ${tbl} used but not defined"
     else
       tbl != null;
+
+  mkOptionalTableCfg = optName: tblName: cfg:
+    if tblName == null then ""
+    else if (cfg.table.${tblName} or null) == null then
+      throw "Table ${tblName} used but not defined"
+    else "${optName} <${tblName}>";
+
+  mkOptionalAttrCfg = optName: attrName: attrSet:
+    if attrName == null then ""
+    else if (attrSet.${attrName} or null) == null then
+      throw "Attribute ${attrName} used but not defined"
+    else "${optName} ${attrSet.${attrName}}";
+
+  ensureMsg = cond: msg: val: if cond then val else throw msg;
+
+  ensure = cond: val: ensureMsg cond "Assertion failed" val;
 }

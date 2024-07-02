@@ -10,6 +10,7 @@ in
     ./listen.nix
     ./pki.nix
     ./table.nix
+    ./action.nix
   ];
 
   options.services.opensmtpd = {
@@ -64,6 +65,7 @@ in
         ${_tableConfig}
         ${_pkiConfig}
         ${_listenersConfig}
+        ${_actionsConfig}
       '';
     };
   };

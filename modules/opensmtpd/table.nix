@@ -63,7 +63,7 @@ in
   options.services.opensmtpd = {
     table = mkOption {
       type = with types; attrsOf (submodule tableConfig);
-      default = { };
+      default = { _sys_aliases.source = "/etc/mail/aliases"; };
       description = "Definitions for smtpd tables";
     };
 

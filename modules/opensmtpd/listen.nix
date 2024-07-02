@@ -2,6 +2,7 @@
 
 let
   inherit (lib) mkOption types mkIf mkMerge;
+  inherit (import ./util.nix) defStr defSubst;
   cfg = config.services.opensmtpd;
   myPort = name: cfg.listeners.${name}.port;
   listenerConfig = { options, name, ... }: {

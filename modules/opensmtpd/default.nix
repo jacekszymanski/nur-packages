@@ -9,6 +9,7 @@ in
   imports = [
     ./listen.nix
     ./pki.nix
+    ./table.nix
   ];
 
   options.services.opensmtpd = {
@@ -60,6 +61,7 @@ in
   config = {
     services.opensmtpd = {
       serverConfiguration = with config.services.opensmtpd; ''
+        ${_tableConfig}
         ${_pkiConfig}
         ${_listenersConfig}
       '';

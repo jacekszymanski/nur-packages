@@ -2,7 +2,7 @@
 
 let
   inherit (lib) mkOption types mkAssert;
-  inherit (import ./util.nix) defStr defSubst xor;
+  inherit (import ./util.nix lib) defStr defSubst xor;
   cfg = config.services.opensmtpd;
   tableConfig = { options, name, ... } @ args: {
     options = {

@@ -1,4 +1,4 @@
-lib: {
+lib: rec {
   defStr = def: if def == null then "" else def;
   defSubst = def: subst: if def == null then "" else builtins.replaceStrings [ "@@" ] [ def ] subst;
   xor = a: b: (a || b) && !(a && b);
@@ -33,4 +33,8 @@ lib: {
   ensureMsg = cond: msg: val: if cond then val else throw msg;
 
   ensure = cond: val: ensureMsg cond "Assertion failed" val;
+
+  joinNonEmptySep = sep: strs: builtins.concatStringsSep sep (nonEmpty strs);
+
+  joinNonEmpty = joinNonEmptySep " ";
 }

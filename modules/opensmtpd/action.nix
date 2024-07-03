@@ -2,7 +2,9 @@
 
 let
   inherit (lib) mkOption types mkEnableOption;
-  inherit (import ./util.nix lib) nonEmpty mkSelfCfg mkSelfTableCfg mkOptionalTableCfg ensureMsg;
+  inherit (import ./util.nix lib)
+    nonEmpty mkSelfCfg mkSelfTableCfg mkOptionalTableCfg ensureMsg
+    joinNonEmpty defSubst defStr;
   cfg = config.services.opensmtpd;
 
   # Local options for all delivery methods
@@ -62,6 +64,13 @@ let
   forward-onlyConfig.options = localOptions;
   mdaConfig.options = mdaOptions;
 
+  lmtpConfig.options = localOptions // {
+    rcptTo = mkEnableOption ''
+      Use the recipient email address (after expansion) instead of the local user
+      in the LMTP session as RCPT TO.
+    '';
+  };
+
   genMboxOnlyOptions = opts: lib.concatStringsSep " " (nonEmpty [
     (mkOptionalTableCfg "alias" opts.alias cfg)
     (mkSelfCfg opts "ttl")
@@ -84,6 +93,11 @@ let
     (genLocalOptions opts)
     (mkSelfCfg opts "wrapper") # TODO check if wrapper is defined
   ]);
+
+  genLmtpOptions = opts: joinNonEmpty [
+    (genLocalOptions opts)
+    (lib.optionalString opts.rcptTo "rcpt-to")
+  ];
 
   # Remote options for all delivery methods
   remoteOptions = {
@@ -166,9 +180,6 @@ let
           make sense only when `smarthost` is specified, otherwise it is an error
           to use them.
 
-          Note: "require" will accept a self-signed certificate, thus making the
-          connection vulnerable to MITM attacks. Use "verify" if you want to be
-          sure that the certificate is signed by a trusted CA.
         '';
       };
 
@@ -246,6 +257,8 @@ let
     };
   };
 
+  relayConfig.options = remoteOptions;
+
   genBackupOptions = opts: lib.concatStringsSep " " (nonEmpty [
     (lib.optionalString opts.backup.enabled "backup")
     (defSubst opts.backup.priorityFrom "mx @@")
@@ -253,7 +266,7 @@ let
 
   genHeloOptions = opts: with opts.helo;
     if name != null && source != null then
-      throw "Only one of `name` and `source` can be specified";
+      throw "Only one of `name` and `source` can be specified"
     else
       lib.concatStringsSep " " (nonEmpty [
         (defSubst name "helo @@")
@@ -293,12 +306,44 @@ let
       (mkOptionalTableCfg "auth" opts.smarthost.authTable cfg)
     ]));
 
+  genTlsOptions = opts: with opts.tls; joinNonEmpty [
+    (lib.optionalString (builtins.elem policy [ "connect" "require" ]) (joinNonEmpty [
+      "tls"
+      (lib.optionalString acceptSelfSigned "no-verify")
+    ]))
+    (mkOptionalAttrCfg "pki" pki cfg.pki)
+    (defSubst protocols ''protocols "@@"'')
+    (defSubst ciphers ''ciphers "@@"'')
+  ];
+
+  genSrcOptions = opts: with opts.src;
+    if address != null && addrTable != null then
+      throw "Only one of `address` and `addrTable` can be specified"
+    else
+      joinNonEmpty [
+        (defSubst address "src @@")
+        (mkOptionalTableCfg "src" addrTable cfg)
+      ];
+
+  genRemoteOptions = opts: joinNonEmpty [
+    (genBackupOptions opts)
+    (genHeloOptions opts)
+    (genDomainOptions opts)
+    (genSmarthostOptions opts)
+    (genTlsOptions opts)
+    (lib.optionalString opts.srs "srs")
+    (defSubst opts.mailFrom "mail-from @@")
+    (genSrcOptions opts)
+  ];
+
   genTypeOptions = {
     maildir = genMaildirOptions;
     mbox = genMboxOnlyOptions;
     expand-only = genLocalOptions;
     forward-only = genLocalOptions;
     mda = genMdaOptions;
+    lmtp = genLmtpOptions;
+    relay = genRemoteOptions;
   };
 
   genSingleAction = name: actionTagged:
@@ -346,6 +391,14 @@ in
         mda = mkOption {
           type = submodule mdaConfig;
           description = "Delivers mail to a command";
+        };
+        lmtp = mkOption {
+          type = submodule lmtpConfig;
+          description = "Delivers mail to LMTP servers";
+        };
+        relay = mkOption {
+          type = submodule relayConfig;
+          description = "Relays mail to remote servers";
         };
       });
       default = {

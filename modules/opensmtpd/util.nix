@@ -34,7 +34,30 @@ lib: rec {
 
   ensure = cond: val: ensureMsg cond "Assertion failed" val;
 
+  ensureTable = tbl: cfg:
+    ensureMsg ((cfg.table.${tbl} or null) != null) "Table ${tbl} used but not defined" tbl;
+
   joinNonEmptySep = sep: strs: builtins.concatStringsSep sep (nonEmpty strs);
 
   joinNonEmpty = joinNonEmptySep " ";
+
+  unpackOnion = layers: data: with builtins; let
+    negLayers = listToAttrs (map
+      (n: { name = n; value = false; })
+      layers);
+    unpackOnionInt = dt:
+      if (!isAttrs dt) then
+        { value = dt; }
+      else
+        let as = attrNames dt; in
+        if (length as == 1 && (elem (elemAt as 0) layers)) then
+          let an = elemAt as 0; in
+          (listToAttrs [{ name = an; value = true; }]) // unpackOnionInt (dt.${an})
+        else
+          dt;
+  in
+  negLayers // unpackOnionInt data;
+
+  traceVal = val: builtins.trace val val;
+
 }

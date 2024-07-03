@@ -41,6 +41,12 @@ lib: rec {
 
   joinNonEmpty = joinNonEmptySep " ";
 
+  /*
+   * TODO: this does not take the order of layers into account, it should
+   * not be a big problem as envelope types are strict on order.
+   *
+   * Check if it is indeed the case and if this can be played with, fix.
+   */
   unpackOnion = layers: data: with builtins; let
     negLayers = listToAttrs (map
       (n: { name = n; value = false; })
@@ -54,10 +60,23 @@ lib: rec {
           let an = elemAt as 0; in
           (listToAttrs [{ name = an; value = true; }]) // unpackOnionInt (dt.${an})
         else
-          dt;
+          { value = dt; };
   in
   negLayers // unpackOnionInt data;
 
+  unTag = data: with builtins; if (!isAttrs data) then
+    throw "Expected tagged data, got ${toString data}"
+  else
+    let
+      as = attrNames data;
+    in
+    if (length as != 1) then
+      throw "Expected tagged data, got ${toString data}"
+    else
+      { tag = elemAt as 0; value = data.${elemAt as 0}; };
+
   traceVal = val: builtins.trace val val;
 
+  exactlyOne = preds: 1 == builtins.foldl (cnt: pred: if pred then cnt + 1 else cnt) 0 preds;
+  exactlyOneNonNull = vals: exactlyOne (map (x: x != null) vals);
 }

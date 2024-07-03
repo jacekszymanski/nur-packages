@@ -197,27 +197,9 @@ let
         '';
       };
 
-      protocols = mkOption {
-        type = with types; nullOr str;
-        default = null;
-        description = ''
-          List of protocols to use for TLS connections. The default depends on the
-          opensmtpd build options etc.
-
-          Unless you know what you are doing, it is recommended to leave this empty.
-        '';
-      };
-
-      ciphers = mkOption {
-        type = with types; nullOr str;
-        default = null;
-        description = ''
-          List of ciphers to use for TLS connections. The default depends on the
-          opensmtpd build options etc.
-
-          Unless you know what you are doing, it is recommended to leave this empty.
-        '';
-      };
+    } //
+    {
+      inherit (import ./tlsopts.nix { inherit lib; }) protocols ciphers;
     };
 
     srs = mkEnableOption ''
@@ -279,6 +261,7 @@ let
     let
       sh = opts.smarthost;
       tlspol = opts.tls.policy;
+      # FIXME leave port implicit if not needed
       portNum =
         if sh.port != null then sh.port
         else if sh.lmtp then throw "Port must be specified explicitly when using LMTP"

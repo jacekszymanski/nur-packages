@@ -1,12 +1,38 @@
 { lib, config, ... }:
 
 let
-  inherit (lib) mkOption types mkIf mkMerge;
-  inherit (import ./util.nix lib) defStr defSubst;
+  inherit (lib) mkOption types mkIf mkMerge mkEnableOption;
+  inherit (import ./util.nix lib) defStr defSubst joinNonEmpty mkOptionalTableCfg;
   cfg = config.services.opensmtpd;
   myPort = name: cfg.listeners.${name}.port;
+
+  baseOptions = {
+    noDsn = mkEnableOption ''
+      Disable DSN (Delivery Status Notification) support.
+    '';
+
+    maskSrc = mkEnableOption ''
+      Omit the from part when prepending “Received” headers.
+    '';
+
+    proxyV2 = mkEnableOption ''
+      Enable support for the PROXYv2 protocol.
+    '';
+
+    tag = mkOption {
+      type = with types; nullOr str;
+      default = null;
+      description = ''
+        Clients connecting to the listener are tagged with the given tag.
+      '';
+    };
+
+  };
+
+  socketConfig.options = baseOptions;
+
   listenerConfig = { options, name, ... }: {
-    options = {
+    options = baseOptions // {
 
       family = mkOption {
         type = with types; nullOr (enum [ "inet" "inet6" ]);
@@ -62,6 +88,31 @@ let
             to use for authentication.
           '';
         };
+
+        addReceived = mkEnableOption ''
+          In “Received” headers, report whether the session was authenticated and by which
+          local user.
+        '';
+
+        senders = mkOption {
+          type = with types; nullOr (submodule {
+            users = mkOption {
+              type = types.str;
+              description = ''
+                Table to look up the email addresses that the authenticated user
+                is allowed to submit mail as.
+              '';
+            };
+
+            masquerade = mkEnableOption ''
+              Rewrite the From header to match the sender provided in the SMTP session.
+            '';
+          });
+          default = null;
+          description = ''
+            The senders configuration for this listener.
+          '';
+        };
       };
 
       filter = mkOption {
@@ -114,10 +165,38 @@ let
           '';
         };
 
+      } //
+      {
+        inherit (import ./tlsopts.nix { inherit lib; }) protocols ciphers;
       };
+
+      hostname = mkOption {
+        type = with types; nullOr str;
+        default = null;
+        description = ''
+          Use hostname in the greeting banner instead of the default server name.w
+        '';
+      };
+
+      # TODO check if should not be mutually exclusive with hostname
+      hostnames = mkOption {
+        type = with types; nullOr str;
+        default = null;
+        description = ''
+          Use hostnames in the greeting banner instead of the default server name.
+        '';
+      };
+
     };
 
   };
+
+  genBaseConfig = lst: joinNonEmpty [
+    (lib.optionalString lst.noDsn "no-dsn")
+    (lib.optionalString lst.maskSrc "mask-src")
+    (lib.optionalString lst.proxyV2 "proxy-v2")
+    (defSubst lst.tag "tag @@")
+  ];
 
   genTlsConfig = tls: with tls;
     let
@@ -132,14 +211,49 @@ let
         if builtins.length pki == 0 then throw "At least one PKI must be set for TLS"
         else builtins.concatStringsSep " " (map (p: "pki ${p}") pki);
     in
-    if policy == "none" then ""
-    else "${polstr} ${castr} ${pkistr}";
+    lib.optionalString (policy != "none") (joinNonEmpty [
+      polstr
+      castr
+      pkistr
+      (defSubst protocols "protocols @@")
+      (defSubst ciphers "ciphers @@")
+    ]);
 
-  genAuthConfig = auth: with auth;
+  checkAuthConfig = auth: with auth;
+    if policy == "none" then
+      if credentials != null then throw "Credentials must be null if policy is none"
+      else if addReceived then throw "addReceived must be false if policy is none"
+      else if senders != null then throw "senders must be null if policy is none"
+      else true
+    else
+      true;
+
+  genSendersConfig = senders: with senders;
+    let
+      users = defStr users;
+      masq = lib.optionalString masquerade "masquerade";
+    in
+    lib.optionalString (users != null) "senders ${users} ${masq}";
+
+  # FIXME it seems opensmtpd cannot be configured to allow auth only with tls
+  # generate a warning if auth is enabled on a tls-optional listener
+  genAuthConfig = auth: with auth; lib.optionalString (checkAuthConfig auth) (
     if policy == "none" then ""
     else
       let polstr = if policy == "require" then "auth" else "auth-optional";
-      in "${polstr} ${defSubst credentials "<@@>"}";
+      in joinNonEmpty [
+        polstr
+        (defSubst credentials "credentials @@")
+        (lib.optionalString addReceived "received-auth")
+        (lib.optionalString (senders != null) (genSendersConfig senders))
+
+      ]
+  );
+
+  genHostnamesConfig = lst: joinNonEmpty [
+    (defSubst lst.hostname "hostname @@")
+    (mkOptionalTableCfg "hostnames" lst.hostnames cfg)
+  ];
 
   genListenerConfig = lst: iface:
     if "${iface}" == "*" then ''
@@ -149,10 +263,16 @@ let
     else
       builtins.concatStringsSep " " [
         "listen on ${iface} ${defStr lst.family} port ${toString lst.port}"
+        (genBaseConfig lst)
         "${genTlsConfig lst.tls} ${genAuthConfig lst.auth}"
         "${defSubst lst.filter "filter @@"}"
+        (genHostnamesConfig lst)
       ];
 
+  genSocketConfig = opts: (lib.optionalString (opts != null) (joinNonEmpty [
+    "listen on socket"
+    (genBaseConfig opts)
+  ]));
 
 in
 {
@@ -168,6 +288,14 @@ in
 
     };
 
+    socketOptions = mkOption {
+      type = with types; nullOr (submodule socketConfig);
+      default = null;
+      description = ''
+        The options to set for the socket listener.
+      '';
+    };
+
     _listenersConfig = mkOption {
       type = with types; uniq str;
       visible = false;
@@ -179,12 +307,11 @@ in
   };
 
   config.services.opensmtpd = {
-    _listenersConfig = with builtins; concatStringsSep "\n" (
-      lib.flatten (
-        map (lst: (map (iface: genListenerConfig lst iface) lst.interfaces))
-          (attrValues cfg.listeners)
-      )
-    );
+    _listenersConfig = with builtins; concatStringsSep "\n" (lib.flatten [
+      (genSocketConfig cfg.socketOptions)
+      (map (lst: (map (iface: genListenerConfig lst iface) lst.interfaces))
+        (attrValues cfg.listeners))
+    ]);
 
     listeners = mkMerge [
       (mkIf cfg.enableSmtp { _smtp = { }; })

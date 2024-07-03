@@ -71,28 +71,28 @@ let
     '';
   };
 
-  genMboxOnlyOptions = opts: lib.concatStringsSep " " (nonEmpty [
+  genMboxOnlyOptions = opts: joinNonEmpty [
     (mkOptionalTableCfg "alias" opts.alias cfg)
     (mkSelfCfg opts "ttl")
     (mkSelfTableCfg opts "virtual")
-  ]);
+  ];
 
-  genLocalOptions = opts: lib.concatStringsSep " " (nonEmpty [
+  genLocalOptions = opts: joinNonEmpty [
     (genMboxOnlyOptions opts)
     (mkSelfCfg opts "user")
-  ]);
+  ];
 
-  genMaildirOptions = opts: lib.concatStringsSep " " (nonEmpty [
+  genMaildirOptions = opts: joinNonEmpty [
     opts.path
     (lib.optionalString opts.junk "junk")
     (genLocalOptions opts)
-  ]);
+  ];
 
-  genMdaOptions = opts: lib.concatStringsSep " " (nonEmpty [
+  genMdaOptions = opts: joinNonEmpty [
     opts.command
     (genLocalOptions opts)
     (mkSelfCfg opts "wrapper") # TODO check if wrapper is defined
-  ]);
+  ];
 
   genLmtpOptions = opts: joinNonEmpty [
     (genLocalOptions opts)
@@ -259,19 +259,19 @@ let
 
   relayConfig.options = remoteOptions;
 
-  genBackupOptions = opts: lib.concatStringsSep " " (nonEmpty [
+  genBackupOptions = opts: joinNonEmpty [
     (lib.optionalString opts.backup.enabled "backup")
     (defSubst opts.backup.priorityFrom "mx @@")
-  ]);
+  ];
 
   genHeloOptions = opts: with opts.helo;
     if name != null && source != null then
       throw "Only one of `name` and `source` can be specified"
     else
-      lib.concatStringsSep " " (nonEmpty [
+      joinNonEmpty [
         (defSubst name "helo @@")
         (mkOptionalTableCfg "helo-src" source cfg)
-      ]);
+      ];
 
   genDomainOptions = opts: mkOptionalTableCfg "domain" opts.domain cfg;
 
@@ -300,11 +300,11 @@ let
     "${proto}://${authAsStr}${hostStr}:${portStr}";
 
   genSmarthostOptions = opts:
-    lib.optionalString (opts.smarthost != null) (lib.concatStringsSep " " (nonEmpty [
+    lib.optionalString (opts.smarthost != null) (joinNonEmpty [
       "host"
       (genSmarthostUrl opts)
       (mkOptionalTableCfg "auth" opts.smarthost.authTable cfg)
-    ]));
+    ]);
 
   genTlsOptions = opts: with opts.tls; joinNonEmpty [
     (lib.optionalString (builtins.elem policy [ "connect" "require" ]) (joinNonEmpty [

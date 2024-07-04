@@ -1,49 +1,10 @@
 { lib, config, ... }:
 
+with (import ./util.nix lib);
 let
   inherit (lib) mkOption types mkEnableOption;
-  inherit (import ./util.nix lib) joinNonEmpty unpackOnion traceVal ensureTable unTag ensureMsg;
+
   cfg = config.services.opensmtpd;
-
-  envelopeType = env: t: with types; either t (attrTag (builtins.listToAttrs [{
-    name = env;
-    value = mkOption {
-      type = t;
-    };
-  }]));
-
-  strOrTable = envelopeType "table" types.str;
-  regexable = t: envelopeType "regex" t;
-  negatable = t: envelopeType "negate" t;
-
-  # FIXME mk* functions' names, and probably this deserves own file
-  mkStrOrTableOption = desc: mkOption {
-    type = negatable (regexable strOrTable);
-    description = desc;
-  };
-
-  mkBoolStrTableOption = desc: mkOption {
-    type = with types; (negatable (either bool (regexable strOrTable)));
-    description = desc;
-  };
-
-  mkNullStrOrTableOption = desc: mkOption {
-    type = types.nullOr (negatable (regexable strOrTable));
-    default = null;
-    description = desc;
-  };
-
-  mkNullBoolStrTableOption = desc: mkOption {
-    type = with types; nullOr (negatable (either bool (regexable strOrTable)));
-    default = null;
-    description = desc;
-  };
-
-  mkNullOrBoolOption = desc: mkOption {
-    type = with types; nullOr bool;
-    default = null;
-    description = desc;
-  };
 
   any = mkEnableOption "Rule matches all";
   local = mkEnableOption "Rule matches local";
